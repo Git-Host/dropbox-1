@@ -21,7 +21,7 @@ const ROOT_DIR = path.resolve(argv.dir)
 const TCP_PORT = process.env.TCP_PORT || 9838
 
 let app = express()
-app.use(bodyParser.urlencoded({ extended: false }))
+app.use(bodyParser.text())
 
 let tcp_socket
 let server = nssocket.createServer((socket) => {  
@@ -111,7 +111,7 @@ function setSyncResponse(req, res, next) {
 			method: req.method,
 	    path: req.url,
 	    type: isDir ? "dir" : "file",
-	    contents: (isDir || req.method === "DELETE") ? null : {},
+	    contents: (isDir || req.method === "DELETE") ? null : req.body,
 	}	
 	next()
 }
