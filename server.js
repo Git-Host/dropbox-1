@@ -6,14 +6,30 @@ let nodeify = require(`bluebird-nodeify`)
 let mime = require('mime-types')
 let rimraf = require('rimraf')
 let mkdirp = require('mkdirp')
+let nssocket = require('nssocket')
+let bodyParser = require('body-parser')
+let argv = require('yargs')
+  .default('dir', process.cwd())
+  .argv
 
 require('songbird')
 
 const NODE_ENV = process.env.NODE_ENV || 'development'
 const NODE_PORT = process.env.PORT || 8000
-const ROOT_DIR = path.resolve(process.cwd())
+const ROOT_DIR = path.resolve(argv.dir)
+
+const TCP_PORT = process.env.TCP_PORT || 9838
 
 let app = express()
+app.use(bodyParser.text())
+
+let tcp_socket
+let server = nssocket.createServer((socket) => {  
+	tcp_socket = socket
+  console.log("socket created")
+})
+
+server.listen(TCP_PORT)
 
 if(NODE_ENV === 'development') {
 	app.use(morgan('dev'))
@@ -31,35 +47,45 @@ app.get('*', setMetaData, setHeaders, (req, res) => {
 	fs.createReadStream(req.filePath).pipe(res)
 })
 
-app.delete('*', setMetaData, (req, res, next) => {
+app.delete('*', setMetaData, setSyncResponse, (req, res, next) => {
 	async () => {
 		if(!req.stat) {
 			return res.send(400, 'Invalid Path')
 		}
-		if(req.stat && req.stat.isDirectory()) {
+		let isDir = req.stat && req.stat.isDirectory()
+		if(isDir) {
 			await rimraf.promise(req.filePath)
 		} else {
 			await fs.promise.unlink(req.filePath)
 		}
+		let syncResponse = req.syncResponse
+		syncResponse.updated = new Date()
+		tcp_socket.send(['Sync'], syncResponse)
 		res.end()
 	}().catch(next)
 })
 
-app.put('*', setMetaData, setDirDetails, (req, res, next) => {
+app.put('*', setMetaData, setDirDetails, setSyncResponse, (req, res, next) => {
 	async () => {
 		if(req.stat) return res.send(405, 'File exists')
 		await mkdirp.promise(req.dirPath)
 		if(!req.isDirectory) req.pipe(fs.createWriteStream(req.filePath))
+		let syncResponse = req.syncResponse
+		syncResponse.updated = new Date()
+		tcp_socket.send(['Sync'], syncResponse)	
 		res.end()
 	}().catch(next)
 })
 
-app.post('*', setMetaData, setDirDetails, (req, res, next) => {
+app.post('*', setMetaData, setDirDetails, setSyncResponse, (req, res, next) => {
 	async () => {
 		if(!req.stat) return res.send(405, 'File does not exists')
 		if(req.isDirectory) return res.send(405, 'Updating directories not allowed')
 		await fs.promise.truncate(req.filePath, 0)
 		req.pipe(fs.createWriteStream(req.filePath))
+		let syncResponse = req.syncResponse
+		syncResponse.updated = new Date()
+		tcp_socket.send(['Sync'], syncResponse)
 		res.end()
 	}().catch(next)
 })
@@ -73,6 +99,20 @@ function setDirDetails(req, res, next) {
 	req.isDirectory = endsWithASlash || !hasExtension
 	req.dirPath = req.isDirectory ? filePath : path.dirname(filePath)
 
+	next()
+}
+
+function setSyncResponse(req, res, next) {
+	let isDir = (req.stat && req.stat.isDirectory()) || req.isDirectory
+	let reqMethod = req.method === 'DELETE' ? 'delete' : req.method === 'PUT' ? 'create' : 'update'
+	console.log(req.body)	
+	req.syncResponse = {
+			action : reqMethod,
+			method: req.method,
+	    path: req.url,
+	    type: isDir ? "dir" : "file",
+	    contents: (isDir || req.method === "DELETE") ? null : req.body,
+	}	
 	next()
 }
 
