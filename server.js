@@ -69,7 +69,7 @@ app.put('*', setMetaData, setDirDetails, setSyncResponse, (req, res, next) => {
 	async () => {
 		if(req.stat) return res.send(405, 'File exists')
 		await mkdirp.promise(req.dirPath)
-		if(!req.isDirectory) req.pipe(fs.createWriteStream(req.filePath))
+		if(!req.isDirectory) await fs.promise.writeFile(req.filePath, req.body)
 		let syncResponse = req.syncResponse
 		syncResponse.updated = new Date()
 		tcp_socket.send(['Sync'], syncResponse)	
@@ -82,7 +82,7 @@ app.post('*', setMetaData, setDirDetails, setSyncResponse, (req, res, next) => {
 		if(!req.stat) return res.send(405, 'File does not exists')
 		if(req.isDirectory) return res.send(405, 'Updating directories not allowed')
 		await fs.promise.truncate(req.filePath, 0)
-		req.pipe(fs.createWriteStream(req.filePath))
+		await fs.promise.writeFile(req.filePath, req.body)
 		let syncResponse = req.syncResponse
 		syncResponse.updated = new Date()
 		tcp_socket.send(['Sync'], syncResponse)
